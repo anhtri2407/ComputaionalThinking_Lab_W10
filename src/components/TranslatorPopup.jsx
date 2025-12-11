@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { translateText } from '../services/api';
 import './TranslatorPopup.css';
 
 function TranslatorPopup() {
@@ -8,9 +9,9 @@ function TranslatorPopup() {
   const [isTranslating, setIsTranslating] = useState(false);
   const [error, setError] = useState(null);
 
-  const translateText = async () => {
+  const handleTranslate = async () => {
     if (!inputText.trim()) {
-      setError('Please enter text to translate');
+      setError('Vui lòng nhập văn bản để dịch');
       return;
     }
 
@@ -19,25 +20,12 @@ function TranslatorPopup() {
     setTranslatedText('');
 
     try {
-      // Using MyMemory Translation API (free, no API key required)
-      const response = await fetch(
-        `https://api.mymemory.translated.net/get?q=${encodeURIComponent(inputText)}&langpair=en|vi`
-      );
-
-      if (!response.ok) {
-        throw new Error('Translation service unavailable');
-      }
-
-      const data = await response.json();
-
-      if (data.responseStatus === 200) {
-        setTranslatedText(data.responseData.translatedText);
-      } else {
-        throw new Error(data.responseDetails || 'Translation failed');
-      }
+      // Using backend API for translation
+      const result = await translateText(inputText, 'en', 'vi');
+      setTranslatedText(result.translated_text);
     } catch (err) {
       console.error('Translation error:', err);
-      setError('Failed to translate. Please try again.');
+      setError('Lỗi dịch thuật. Vui lòng thử lại.');
     } finally {
       setIsTranslating(false);
     }
@@ -46,7 +34,7 @@ function TranslatorPopup() {
   const handleKeyPress = (e) => {
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
-      translateText();
+      handleTranslate();
     }
   };
 
@@ -65,7 +53,7 @@ function TranslatorPopup() {
   return (
     <>
       {/* Floating Button */}
-      <button 
+      <button
         className="translator-fab"
         onClick={() => setIsOpen(!isOpen)}
         title="Translate English to Vietnamese"
@@ -78,7 +66,7 @@ function TranslatorPopup() {
         <div className="translator-popup">
           <div className="translator-header">
             <h3>🌐 English → Vietnamese Translator</h3>
-            <button 
+            <button
               className="close-btn"
               onClick={() => setIsOpen(false)}
             >
@@ -102,14 +90,14 @@ function TranslatorPopup() {
 
             {/* Buttons */}
             <div className="translator-buttons">
-              <button 
+              <button
                 className="translate-btn"
-                onClick={translateText}
+                onClick={handleTranslate}
                 disabled={isTranslating || !inputText.trim()}
               >
-                {isTranslating ? '⏳ Translating...' : '🔄 Translate'}
+                {isTranslating ? '⏳ Đang dịch...' : '🔄 Dịch'}
               </button>
-              <button 
+              <button
                 className="clear-btn"
                 onClick={clearAll}
                 disabled={isTranslating}
@@ -130,7 +118,7 @@ function TranslatorPopup() {
               <div className="output-header">
                 <label>Vietnamese (Tiếng Việt):</label>
                 {translatedText && (
-                  <button 
+                  <button
                     className="copy-btn"
                     onClick={copyToClipboard}
                     title="Copy to clipboard"
@@ -157,7 +145,7 @@ function TranslatorPopup() {
 
       {/* Overlay */}
       {isOpen && (
-        <div 
+        <div
           className="translator-overlay"
           onClick={() => setIsOpen(false)}
         />

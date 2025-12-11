@@ -2,9 +2,11 @@ import React, { useState } from 'react';
 import Map from './components/Map';
 import SearchBar from './components/SearchBar';
 import TranslatorPopup from './components/TranslatorPopup';
+import ChatBot from './components/ChatBot/ChatBot';
 import AuthModal from './components/Auth/AuthModal';
 import UserMenu from './components/Auth/UserMenu';
 import { useAuth } from './contexts/AuthContext';
+import { geocodeLocation, getWeather, getPOIs } from './services/api';
 import './App.css';
 
 function App() {
@@ -14,49 +16,38 @@ function App() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
   const [showAuthModal, setShowAuthModal] = useState(false);
-  
+
   const { currentUser } = useAuth();
-  
-  // Get OpenWeather API key from environment variable
-  const OPENWEATHER_API_KEY = import.meta.env.VITE_OPENWEATHER_API_KEY;
 
   const handleLocationSearch = async (locationName) => {
     setLoading(true);
     setError(null);
-    
+
     try {
-      // Search for location in Vietnam using Nominatim API
-      const geocodeResponse = await fetch(
-        `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(locationName)},Vietnam&format=json&limit=1`
-      );
-      const geocodeData = await geocodeResponse.json();
-      
-      if (geocodeData.length === 0) {
-        setError('Location not found in Vietnam. Please try another search.');
-        setLoading(false);
-        return;
-      }
-      
-      const { lat, lon, display_name } = geocodeData[0];
-      const coords = [parseFloat(lat), parseFloat(lon)];
-      
-      // Extract the main city name from the search or display_name
-      const cityName = locationName || display_name.split(',')[0];
-      
+      // Use backend API for geocoding
+      const geoData = await geocodeLocation(locationName);
+
+      const coords = [geoData.lat, geoData.lon];
+      const cityName = geoData.searched_city || locationName;
+
       setLocation({
         coordinates: coords,
-        name: display_name,
+        name: geoData.display_name,
         searchedCity: cityName
       });
-      
-      // Fetch weather data and points of interest in parallel
+
+      // Fetch weather data and points of interest in parallel using backend API
       await Promise.all([
-        fetchPointsOfInterest(lat, lon),
-        fetchWeatherData(lat, lon, cityName)
+        fetchPointsOfInterest(geoData.lat, geoData.lon),
+        fetchWeatherData(geoData.lat, geoData.lon, cityName)
       ]);
-      
+
     } catch (err) {
-      setError('Failed to fetch location data. Please try again.');
+      if (err.message.includes('not found')) {
+        setError('Không tìm thấy địa điểm ở Việt Nam. Vui lòng thử lại.');
+      } else {
+        setError('Lỗi khi tải dữ liệu. Vui lòng thử lại.');
+      }
       console.error('Error:', err);
     } finally {
       setLoading(false);
@@ -65,126 +56,35 @@ function App() {
 
   const fetchPointsOfInterest = async (lat, lon, retryCount = 0) => {
     try {
-      // Use Overpass API to get points of interest
-      // Search within 3km radius for better results
-      const radius = 3000;
-      const query = `
-        [out:json][timeout:25];
-        (
-          node["tourism"](around:${radius},${lat},${lon});
-          node["amenity"="restaurant"](around:${radius},${lat},${lon});
-          node["amenity"="cafe"](around:${radius},${lat},${lon});
-          node["historic"](around:${radius},${lat},${lon});
-          node["leisure"](around:${radius},${lat},${lon});
-          node["shop"="mall"](around:${radius},${lat},${lon});
-          node["amenity"="place_of_worship"](around:${radius},${lat},${lon});
-        );
-        out body 15;
-      `;
-      
-      const overpassUrl = 'https://overpass-api.de/api/interpreter';
-      const response = await fetch(overpassUrl, {
-        method: 'POST',
-        body: query,
-        headers: {
-          'Content-Type': 'application/x-www-form-urlencoded'
-        }
-      });
-      
-      if (!response.ok) {
-        console.warn('Overpass API error:', response.status, response.statusText);
-        throw new Error(`Overpass API returned ${response.status}`);
-      }
-      
-      const contentType = response.headers.get('content-type');
-      if (!contentType || !contentType.includes('application/json')) {
-        console.warn('Overpass API returned non-JSON response');
-        throw new Error('Invalid response from Overpass API');
-      }
-      
-      const data = await response.json();
-      
-      if (data.elements && data.elements.length > 0) {
-        const poisData = data.elements.map((element) => {
-          const tags = element.tags;
-          return {
-            id: element.id,
-            name: tags.name || tags['name:en'] || tags['name:vi'] || 'Unnamed location',
-            type: tags.tourism || tags.amenity || tags.historic || tags.leisure || 'Point of Interest',
-            coordinates: [element.lat, element.lon],
-            description: tags.description || tags['description:en'] || tags.note || '',
-            address: [
-              tags['addr:housenumber'],
-              tags['addr:street'],
-              tags['addr:district'],
-              tags['addr:city'],
-              tags['addr:province']
-            ].filter(Boolean).join(', ') || tags.address || '',
-            phone: tags.phone || tags['contact:phone'] || '',
-            website: tags.website || tags['contact:website'] || '',
-            openingHours: tags.opening_hours || tags['opening_hours:covid19'] || '',
-            cuisine: tags.cuisine || '',
-            rating: tags['stars'] || '',
-            wikipedia: tags.wikipedia || tags['wikipedia:en'] || '',
-            wikidata: tags.wikidata || '',
-            email: tags.email || tags['contact:email'] || '',
-            tags: tags
-          };
-        });
-        
-        setPois(poisData.slice(0, 5)); // Limit to 5 POIs
+      // Use backend API to get points of interest
+      const data = await getPOIs(lat, lon, 3000);
+
+      if (data.pois && data.pois.length > 0) {
+        setPois(data.pois);
       } else {
         setPois([]);
         console.warn('No POIs found in the response');
       }
     } catch (err) {
       console.error('Error fetching POIs:', err);
-      
+
       // Retry once after a short delay
       if (retryCount < 1) {
         console.log('Retrying POI fetch...');
         await new Promise(resolve => setTimeout(resolve, 2000));
         return fetchPointsOfInterest(lat, lon, retryCount + 1);
       }
-      
+
       setPois([]);
-      // Don't set error message for POI failures, as weather still works
-      console.warn('Could not fetch points of interest. The Overpass API may be temporarily unavailable.');
+      console.warn('Could not fetch points of interest. The API may be temporarily unavailable.');
     }
   };
 
   const fetchWeatherData = async (lat, lon, cityName) => {
     try {
-      if (!OPENWEATHER_API_KEY || OPENWEATHER_API_KEY === 'YOUR_API_KEY_HERE') {
-        console.warn('OpenWeather API key not configured');
-        setWeather(null);
-        return;
-      }
-      
-      const weatherUrl = `https://api.openweathermap.org/data/2.5/weather?lat=${lat}&lon=${lon}&units=metric&appid=${OPENWEATHER_API_KEY}`;
-      
-      const response = await fetch(weatherUrl);
-      
-      if (!response.ok) {
-        const errorData = await response.json();
-        console.error('Weather API error:', errorData);
-        throw new Error(`Weather data not available: ${errorData.message || response.statusText}`);
-      }
-      
-      const data = await response.json();
-      
-      setWeather({
-        temp: Math.round(data.main.temp),
-        feelsLike: Math.round(data.main.feels_like),
-        description: data.weather[0].description,
-        icon: data.weather[0].icon,
-        humidity: data.main.humidity,
-        windSpeed: data.wind.speed,
-        pressure: data.main.pressure,
-        tempMin: Math.round(data.main.temp_min),
-        tempMax: Math.round(data.main.temp_max),
-        city: cityName || data.name  // Use the searched city name instead of API's name
-      });
+      // Use backend API to get weather data
+      const data = await getWeather(lat, lon, cityName);
+      setWeather(data);
     } catch (err) {
       console.error('Error fetching weather:', err);
       setWeather(null);
@@ -204,7 +104,7 @@ function App() {
               {currentUser ? (
                 <UserMenu />
               ) : (
-                <button 
+                <button
                   className="login-btn"
                   onClick={() => setShowAuthModal(true)}
                 >
@@ -218,18 +118,18 @@ function App() {
             </div>
           </div>
         </header>
-        
-        <SearchBar 
-          onSearch={handleLocationSearch} 
+
+        <SearchBar
+          onSearch={handleLocationSearch}
           loading={loading}
         />
-        
+
         {error && (
           <div className="error-message">
             {error}
           </div>
         )}
-        
+
         {location && (
           <div className="location-info">
             <h3>📍 Location: {location.name}</h3>
@@ -246,12 +146,12 @@ function App() {
             ) : null}
           </div>
         )}
-        
+
         {weather && (
           <div className="weather-card">
             <div className="weather-header">
               <div className="weather-main">
-                <img 
+                <img
                   src={`https://openweathermap.org/img/wn/${weather.icon}@2x.png`}
                   alt={weather.description}
                   className="weather-icon"
@@ -289,12 +189,12 @@ function App() {
             </div>
           </div>
         )}
-        
-        <Map 
-          location={location} 
+
+        <Map
+          location={location}
           pois={pois}
         />
-        
+
         {pois.length > 0 && (
           <div className="poi-list">
             <h3>Points of Interest:</h3>
@@ -305,11 +205,11 @@ function App() {
                     <h4>{index + 1}. {poi.name}</h4>
                     <span className="poi-type">{poi.type}</span>
                   </div>
-                  
+
                   {poi.description && (
                     <p className="poi-description">{poi.description}</p>
                   )}
-                  
+
                   <div className="poi-details">
                     {poi.address && (
                       <div className="poi-detail-item">
@@ -317,35 +217,35 @@ function App() {
                         <span>{poi.address}</span>
                       </div>
                     )}
-                    
+
                     {poi.phone && (
                       <div className="poi-detail-item">
                         <span className="detail-icon">📞</span>
                         <a href={`tel:${poi.phone}`}>{poi.phone}</a>
                       </div>
                     )}
-                    
+
                     {poi.openingHours && (
                       <div className="poi-detail-item">
                         <span className="detail-icon">🕒</span>
                         <span>{poi.openingHours}</span>
                       </div>
                     )}
-                    
+
                     {poi.cuisine && (
                       <div className="poi-detail-item">
                         <span className="detail-icon">🍽️</span>
                         <span>Cuisine: {poi.cuisine}</span>
                       </div>
                     )}
-                    
+
                     {poi.rating && (
                       <div className="poi-detail-item">
                         <span className="detail-icon">⭐</span>
                         <span>{poi.rating} stars</span>
                       </div>
                     )}
-                    
+
                     {poi.website && (
                       <div className="poi-detail-item">
                         <span className="detail-icon">🌐</span>
@@ -354,26 +254,26 @@ function App() {
                         </a>
                       </div>
                     )}
-                    
+
                     {poi.email && (
                       <div className="poi-detail-item">
                         <span className="detail-icon">📧</span>
                         <a href={`mailto:${poi.email}`}>{poi.email}</a>
                       </div>
                     )}
-                    
+
                     {poi.wikipedia && (
                       <div className="poi-detail-item">
                         <span className="detail-icon">📖</span>
-                        <a href={`https://en.wikipedia.org/wiki/${poi.wikipedia.split(':')[1] || poi.wikipedia}`} 
-                           target="_blank" 
-                           rel="noopener noreferrer">
+                        <a href={`https://en.wikipedia.org/wiki/${poi.wikipedia.split(':')[1] || poi.wikipedia}`}
+                          target="_blank"
+                          rel="noopener noreferrer">
                           Wikipedia
                         </a>
                       </div>
                     )}
                   </div>
-                  
+
                   <div className="poi-coordinates">
                     <small>Coordinates: {poi.coordinates[0].toFixed(5)}, {poi.coordinates[1].toFixed(5)}</small>
                   </div>
@@ -383,14 +283,17 @@ function App() {
           </div>
         )}
       </div>
-      
+
       {/* Translation Popup */}
       <TranslatorPopup />
-      
+
+      {/* AI Chatbot */}
+      <ChatBot />
+
       {/* Auth Modal */}
-      <AuthModal 
-        isOpen={showAuthModal} 
-        onClose={() => setShowAuthModal(false)} 
+      <AuthModal
+        isOpen={showAuthModal}
+        onClose={() => setShowAuthModal(false)}
       />
     </div>
   );
