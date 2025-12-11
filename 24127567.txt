@@ -1,2 +1,3 @@
-Repo: https://github.com/anhtri2407/ComputaionalThinking_Lab_W09
-Demo: https://vietnam-poi-map-47d9d.web.app/
+Repo: https://github.com/anhtri2407/ComputaionalThinking_Lab_W10
+Demo: https://lab-w10.web.app/
+Back-End: https://anhtri-vietnam-poi-backend.hf.space
